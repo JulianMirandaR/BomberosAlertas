@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1043293861659",
+    "project_id": "bomberosalertas-4b19b",
+    "storage_bucket": "bomberosalertas-4b19b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1043293861659:android:78ff708b77ee6a97dc05be",
+        "android_client_info": {
+          "package_name": "com.cuartel35.bomberosalertas"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLm1RJcZuwqu0LcvUWpRHOp0ipsSvFK3Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
