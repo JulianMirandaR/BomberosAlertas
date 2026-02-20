@@ -1198,7 +1198,7 @@ fun HomeScreen() {
                             modifier = Modifier.size(24.dp)
                         ) {
                             Icon(
-                                androidx.compose.material.icons.filled.Edit, // Will need import or reliable icon
+                                Icons.Filled.Edit,
                                 contentDescription = "Editar",
                                 tint = Color.Gray,
                                 modifier = Modifier.size(16.dp)
@@ -1349,10 +1349,16 @@ fun AlertsList(
             alerts.forEachIndexed { index, alerta ->
                 val isLatest = index == 0
                 
+                // Check if alert is expired (older than 1 hour)
+                val isExpired = remember(alerta.fecha) {
+                    (Date().time - alerta.fecha.time) > 3600000 // 1 hour in ms
+                }
+                
                 // Minimalist Active Alert Card
                 // Latest: Stronger Red BG. Others: Dark Grey BG.
-                val containerColor = if (isLatest) Color(0xFF450A0A) else Color(0xFF1A1A1A)
-                val borderColor = if (isLatest) Color(0xFFB71C1C) else Color(0xFF333333)
+                // Expired: Very Dark Gray
+                val containerColor = if (isExpired) Color(0xFF141414) else if (isLatest) Color(0xFF450A0A) else Color(0xFF1A1A1A)
+                val borderColor = if (isExpired) Color(0xFF333333) else if (isLatest) Color(0xFFB71C1C) else Color(0xFF333333)
 
                 // Listener for responses
                 var disponibles by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -1380,20 +1386,21 @@ fun AlertsList(
                 ) {
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                           if (isLatest) {
+                           if (isLatest && !isExpired) {
                                Box(modifier = Modifier.size(8.dp).background(Color.Red, androidx.compose.foundation.shape.CircleShape))
                                Spacer(modifier = Modifier.width(12.dp))
                            }
                            Column {
                                Text(
-                                   if (isLatest) "ACTUAL: ${alerta.titulo.uppercase()}" else alerta.titulo.uppercase(), 
-                                   style = MaterialTheme.typography.titleMedium, 
-                                   color = Color.White, 
+                                   text = if (isLatest && !isExpired) "ACTUAL: ${alerta.titulo.uppercase()}" else alerta.titulo.uppercase(),
+                                   style = MaterialTheme.typography.titleMedium,
+                                   color = if (isExpired) Color.Gray else Color.White,
                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                                    letterSpacing = 1.sp
                                )
                                Text(
-                                    "Hace ${((Date().time - alerta.fecha.time) / 1000 / 60)} min",
+                                    text = if (isExpired) "Expirada • Hace ${((Date().time - alerta.fecha.time) / 1000 / 60)} min" 
+                                    else "Hace ${((Date().time - alerta.fecha.time) / 1000 / 60)} min",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color.Gray
                                )
@@ -1406,7 +1413,7 @@ fun AlertsList(
                         if (disponibles.isNotEmpty()) {
                             Text(
                                 "EN CAMINO: ${disponibles.size}",
-                                color = Color(0xFF69F0AE),
+                                color = if (isExpired) Color.Gray else Color(0xFF69F0AE),
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
                             )
@@ -1423,7 +1430,7 @@ fun AlertsList(
                         Spacer(modifier = Modifier.height(20.dp))
 
                         // Action Buttons
-                        val canRespond = index == 0
+                        val canRespond = index == 0 && !isExpired
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1450,7 +1457,7 @@ fun AlertsList(
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = Color(0xFF4CAF50), // Green
                                     contentColor = Color.White,
-                                    disabledContainerColor = Color(0xFF1B5E20), // Darker green disabled
+                                    disabledContainerColor = Color(0xFF222222), // Dark gray disabled
                                     disabledContentColor = Color.Gray
                                 ),
                                 shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
