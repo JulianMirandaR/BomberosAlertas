@@ -1,6 +1,7 @@
 package com.cuartel35.bomberosalertas
 
 import android.Manifest
+import com.cuartel35.bomberosalertas.R
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -22,6 +23,8 @@ import android.media.RingtoneManager
 import android.media.AudioAttributes
 import android.net.Uri
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +33,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
@@ -194,6 +199,14 @@ fun MainScreen() {
                 drawerContentColor = Color.White
             ) {
                 Spacer(modifier = Modifier.height(24.dp))
+                Image(
+                    painter = painterResource(id = R.drawable.icono_aplicacion),
+                    contentDescription = "Logo Aplicación",
+                    modifier = Modifier
+                        .padding(start = 24.dp)
+                        .size(80.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     "BOMBEROS", 
                     modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
@@ -264,21 +277,33 @@ fun MainScreen() {
                     }
 
                     // Title - Aligned Center
-                    Text(
-                        text = when (currentScreen) {
-                            "Home" -> "BOMBEROS ALERTAS"
-                            "Personal" -> "PERSONAL"
-                            "Profile" -> "PERFIL"
-                            "History" -> "HISTORIAL"
-                            "Sounds" -> "SONIDOS"
-                            "GroupCode" -> "CÓDIGO CUARTEL"
-                            else -> ""
-                        },
-                        style = MaterialTheme.typography.titleSmall,
-                        letterSpacing = 2.sp,
-                        color = Color.White,
-                        modifier = Modifier.align(Alignment.Center)
-                    )
+                    Row(
+                        modifier = Modifier.align(Alignment.Center),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (currentScreen == "Home") {
+                            Image(
+                                painter = painterResource(id = R.drawable.icono_aplicacion),
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp)
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                        }
+                        Text(
+                            text = when (currentScreen) {
+                                "Home" -> "BOMBEROS ALERTAS"
+                                "Personal" -> "PERSONAL"
+                                "Profile" -> "PERFIL"
+                                "History" -> "HISTORIAL"
+                                "Sounds" -> "SONIDOS"
+                                "GroupCode" -> "CÓDIGO CUARTEL"
+                                else -> ""
+                            },
+                            style = MaterialTheme.typography.titleSmall,
+                            letterSpacing = 2.sp,
+                            color = Color.White
+                        )
+                    }
                 }
             }
 
@@ -485,12 +510,28 @@ fun GroupCodeScreen() {
 @Composable
 fun PersonalScreen() {
     val db = FirebaseFirestore.getInstance()
-    var users by remember { mutableStateOf<List<Map<String, Any>>>(emptyList()) }
+    // List of Pair<UID, Data>
+    var usersList by remember { mutableStateOf<List<Pair<String, Map<String, Any>>>>(emptyList()) }
+    var currentUserRole by remember { mutableStateOf("BOMBERO") }
+    val currentUser = FirebaseAuth.getInstance().currentUser
+    val context = LocalContext.current
 
-    // Ahora leemos de la colección 'users' donde están los perfiles completos
+    // Cargar usuarios y rol del usuario actual
     androidx.compose.runtime.LaunchedEffect(Unit) {
+        // 1. Get current user role
+        if (currentUser != null) {
+            db.collection("users").document(currentUser.uid).get().addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    currentUserRole = doc.getString("rol") ?: "BOMBERO"
+                }
+            }
+        }
+
+        // 2. Get all users
         db.collection("users").get().addOnSuccessListener { snapshot ->
-            users = snapshot.documents.map { it.data ?: emptyMap() }
+            usersList = snapshot.documents.map { doc -> 
+                doc.id to (doc.data ?: emptyMap()) 
+            }
         }
     }
 
@@ -498,7 +539,7 @@ fun PersonalScreen() {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        if (users.isEmpty()) {
+        if (usersList.isEmpty()) {
             item {
                 Text(
                     "No hay personal registrado.", 
@@ -508,11 +549,12 @@ fun PersonalScreen() {
                 )
             }
         }
-        items(users.size) { index ->
-            val user = users[index]
-            val nombre = user["nombre"] as? String ?: "Sin Nombre"
-            val email = user["email"] as? String ?: ""
-            val sangre = user["grupoSanguineo"] as? String ?: "-"
+        items(usersList.size) { index ->
+            val (uid, userData) = usersList[index]
+            val nombre = userData["nombre"] as? String ?: "Sin Nombre"
+            val email = userData["email"] as? String ?: ""
+            val sangre = userData["grupoSanguineo"] as? String ?: "-"
+            val role = userData["rol"] as? String ?: "BOMBERO"
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -535,19 +577,37 @@ fun PersonalScreen() {
                 
                 Column(modifier = Modifier.weight(1f)) {
                     Text(nombre, style = MaterialTheme.typography.bodyLarge, color = Color.White)
-                    Text(email, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+                    Text("$role • $email", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
                     
-                    val condiciones = user["condiciones"] as? String
+                    val condiciones = userData["condiciones"] as? String
                     if (!condiciones.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Med: $condiciones",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFEF5350) // Redish to highlight medical info
+                            color = Color(0xFFEF5350) 
                         )
                     }
                 }
                 
+                if (currentUserRole == "JEFE" && uid != currentUser?.uid) {
+                    IconButton(onClick = {
+                        // Confirm deletion logic could be added here
+                        db.collection("users").document(uid).delete()
+                            .addOnSuccessListener {
+                                Toast.makeText(context, "Usuario eliminado", Toast.LENGTH_SHORT).show()
+                                // Refresh list locally
+                                usersList = usersList.filter { it.first != uid }
+                            }
+                    }) {
+                        Icon(
+                            androidx.compose.material.icons.Icons.Default.Delete, 
+                            contentDescription = "Eliminar", 
+                            tint = Color.Red 
+                        )
+                    }
+                }
+
                 if (sangre != "-" && sangre.isNotEmpty()) {
                     Box(
                         modifier = Modifier
@@ -685,6 +745,7 @@ fun SoundScreen() {
     // Control de reproducción
     var playingRingtone by remember { mutableStateOf<android.media.MediaPlayer?>(null) }
     var systemRingtone by remember { mutableStateOf<android.media.Ringtone?>(null) }
+    var currentPlayingUri by remember { mutableStateOf<String?>(null) }
     
     // Configuración persistente
     val prefs = remember { context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE) }
@@ -761,6 +822,7 @@ fun SoundScreen() {
                             try {
                                 if (playingRingtone?.isPlaying == true) playingRingtone?.stop()
                                 systemRingtone?.stop()
+                                currentPlayingUri = null
                             } catch (e: Exception) {}
 
                             Toast.makeText(context, "Tono seleccionado", Toast.LENGTH_SHORT).show()
@@ -783,26 +845,44 @@ fun SoundScreen() {
                     
                     Text(name, style = MaterialTheme.typography.bodyLarge, color = textColor, modifier = Modifier.weight(1f))
                     
+                    val isPlayingThis = currentPlayingUri == uri.toString()
+                    
                     IconButton(onClick = {
                         try {
+                            // Stop everything first
                             if (playingRingtone?.isPlaying == true) {
                                 playingRingtone?.stop()
                             }
                             systemRingtone?.stop()
                             
-                            if (uri.toString().contains("android.resource")) {
-                                 playingRingtone = android.media.MediaPlayer.create(context, uri)
-                                 playingRingtone?.start()
+                            if (isPlayingThis) {
+                                // If we were playing this, we just stopped it. Reset state.
+                                currentPlayingUri = null
                             } else {
-                                val r = RingtoneManager.getRingtone(context, uri)
-                                systemRingtone = r
-                                r.play()
+                                // Play new sound
+                                currentPlayingUri = uri.toString()
+                                
+                                if (uri.toString().contains("android.resource")) {
+                                     playingRingtone = android.media.MediaPlayer.create(context, uri)
+                                     playingRingtone?.setOnCompletionListener { 
+                                         currentPlayingUri = null 
+                                     }
+                                     playingRingtone?.start()
+                                } else {
+                                    val r = RingtoneManager.getRingtone(context, uri)
+                                    systemRingtone = r
+                                    r.play()
+                                    // Ringtone doesn't have a completion listener easily available in this API level
+                                    // So it will stay as "playing" icon until user stops or plays another, 
+                                    // or we could use a timer but manual stop is safer.
+                                }
                             }
                         } catch (e: Exception) {
                             e.printStackTrace()
+                            currentPlayingUri = null
                         }
                     }) {
-                        Text("▶", color = Color.Gray)
+                        Text(if (isPlayingThis) "■" else "▶", color = if (isPlayingThis) Color(0xFFEF5350) else Color.Gray)
                     }
                 }
                 HorizontalDivider(color = Color(0xFF222222))
@@ -1004,6 +1084,71 @@ fun HomeScreen() {
     
     // Minimalist state
     var tituloAlerta by remember { mutableStateOf("") }
+    
+    // Info Board State
+    var infoContent by remember { mutableStateOf("Cargando novedades...") }
+    var isEditingInfo by remember { mutableStateOf(false) }
+    var newInfoText by remember { mutableStateOf("") }
+    var userRole by remember { mutableStateOf("BOMBERO") } // Default role
+
+    val db = FirebaseFirestore.getInstance()
+    val user = FirebaseAuth.getInstance().currentUser
+
+    // Load Data
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        // 1. Get Pizarra Content
+        db.collection("config").document("pizarra").addSnapshotListener { snapshot, _ ->
+            if (snapshot != null && snapshot.exists()) {
+                infoContent = snapshot.getString("content") ?: "Sin novedades."
+            } else {
+                infoContent = "Haga clic para editar novedades."
+            }
+        }
+
+        // 2. Get User Role
+        if (user != null) {
+            db.collection("users").document(user.uid).get().addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    userRole = doc.getString("rol") ?: "BOMBERO"
+                }
+            }
+        }
+    }
+
+    if (isEditingInfo) {
+        AlertDialog(
+            onDismissRequest = { isEditingInfo = false },
+            title = { Text("Editar Pizarra", color = Color.White) },
+            text = {
+                OutlinedTextField(
+                    value = newInfoText,
+                    onValueChange = { newInfoText = it },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color.White,
+                        unfocusedBorderColor = Color.Gray
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(150.dp)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        db.collection("config").document("pizarra")
+                            .set(mapOf("content" to newInfoText, "updatedBy" to user?.email, "updatedAt" to Date()))
+                        isEditingInfo = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F))
+                ) { Text("GUARDAR") }
+            },
+            dismissButton = {
+                TextButton(onClick = { isEditingInfo = false }) { Text("CANCELAR", color = Color.Gray) }
+            },
+            containerColor = Color(0xFF222222),
+            textContentColor = Color.White
+        )
+    }
 
     Column(
         modifier = Modifier
@@ -1012,7 +1157,69 @@ fun HomeScreen() {
             .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        // PIZARRA INFORMATIVA
+        Card(
+            colors = CardDefaults.cardColors(
+                containerColor = Color(0xFF1E1E1E)
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 16.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+             border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF333333))
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                 Row(
+                     verticalAlignment = Alignment.CenterVertically,
+                     modifier = Modifier.fillMaxWidth()
+                 ) {
+                    Text("📋", fontSize = 16.sp)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        "PIZARRA INFORMATIVA", 
+                        style = MaterialTheme.typography.labelSmall, 
+                        color = Color(0xFF90CAF9), 
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    
+                    // Edit Button for Chiefs/Officers
+                    if (userRole == "JEFE" || userRole == "OFICIAL") {
+                        IconButton(
+                            onClick = { 
+                                newInfoText = infoContent
+                                isEditingInfo = true 
+                            },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                androidx.compose.material.icons.filled.Edit, // Will need import or reliable icon
+                                contentDescription = "Editar",
+                                tint = Color.Gray,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                HorizontalDivider(color = Color(0xFF333333))
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Text(
+                    infoContent,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFEEEEEE),
+                    lineHeight = 20.sp
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
 
         // Minimal Clean Input
         MinimalTextField(
