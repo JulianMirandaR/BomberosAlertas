@@ -57,6 +57,7 @@ dependencies {
     // Networking / Location
     implementation("com.android.volley:volley:1.2.1")
     implementation("com.google.android.gms:play-services-location:21.0.1")
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
 
     // Firebase
     implementation(platform("com.google.firebase:firebase-bom:32.7.0"))

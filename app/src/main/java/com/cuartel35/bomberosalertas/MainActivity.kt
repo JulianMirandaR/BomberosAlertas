@@ -32,7 +32,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
@@ -65,22 +66,27 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessaging
 import org.json.JSONObject
 import java.util.Date
+import org.osmdroid.config.Configuration
+import android.preference.PreferenceManager
 
 class MainActivity : ComponentActivity() {
 
-    private val requestPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted: Boolean ->
-        if (isGranted) {
-            Log.d("FCM", "Permiso de notificaciones concedido")
-        } else {
-            Log.w("FCM", "Permiso de notificaciones denegado")
-            Toast.makeText(this, "Habilitá las notificaciones para recibir alertas", Toast.LENGTH_LONG).show()
+    private val requestMultiplePermissionsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions[Manifest.permission.POST_NOTIFICATIONS] == false) {
+            Toast.makeText(this, "Las notificaciones son vitales para recibir alertas.", Toast.LENGTH_LONG).show()
+        }
+        if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == false && permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == false) {
+            Log.w("PERMISSIONS", "Permiso de ubicación denegado")
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        Configuration.getInstance().load(this, PreferenceManager.getDefaultSharedPreferences(this))
+        Configuration.getInstance().userAgentValue = packageName
 
         createNotificationChannel()
 
@@ -94,7 +100,7 @@ class MainActivity : ComponentActivity() {
                 Log.e("FCM", "Error al suscribirse al topic", it)
             }
 
-        checkNotificationPermission()
+        checkAndRequestAllPermissions()
         saveCurrentToken()
 
         setContent {
@@ -136,15 +142,25 @@ class MainActivity : ComponentActivity() {
     }
 
 
-    private fun checkNotificationPermission() {
+    private fun checkAndRequestAllPermissions() {
+        val permissionsToRequest = mutableListOf<String>()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(
-                    this,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) != PackageManager.PERMISSION_GRANTED
-            ) {
-                requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                permissionsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
             }
+        }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            permissionsToRequest.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+        }
+
+        if (permissionsToRequest.isNotEmpty()) {
+            requestMultiplePermissionsLauncher.launch(permissionsToRequest.toTypedArray())
         }
     }
 
@@ -208,7 +224,7 @@ fun MainScreen() {
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
-                    "BOMBEROS", 
+                    "FIREGUARD", 
                     modifier = Modifier.padding(start = 24.dp, bottom = 8.dp),
                     style = MaterialTheme.typography.headlineSmall, 
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
@@ -244,6 +260,7 @@ fun MainScreen() {
                 TextButton(
                     onClick = { 
                         FirebaseAuth.getInstance().signOut()
+                        context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).edit().remove("group_code").apply()
                         val intent = Intent(context, LoginActivity::class.java)
                         intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
                         context.startActivity(intent)
@@ -291,7 +308,7 @@ fun MainScreen() {
                         }
                         Text(
                             text = when (currentScreen) {
-                                "Home" -> "BOMBEROS ALERTAS"
+                                "Home" -> "FIREGUARD"
                                 "Personal" -> "PERSONAL"
                                 "Profile" -> "PERFIL"
                                 "History" -> "HISTORIAL"
@@ -516,6 +533,10 @@ fun PersonalScreen() {
     val currentUser = FirebaseAuth.getInstance().currentUser
     val context = LocalContext.current
 
+    val groupCode = remember { 
+        context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("group_code", "") ?: "" 
+    }
+
     // Cargar usuarios y rol del usuario actual
     androidx.compose.runtime.LaunchedEffect(Unit) {
         // 1. Get current user role
@@ -528,9 +549,11 @@ fun PersonalScreen() {
         }
 
         // 2. Get all users
-        db.collection("users").get().addOnSuccessListener { snapshot ->
-            usersList = snapshot.documents.map { doc -> 
-                doc.id to (doc.data ?: emptyMap()) 
+        if (groupCode.isNotEmpty()) {
+            db.collection("users").whereEqualTo("codigoCuartel", groupCode).get().addOnSuccessListener { snapshot ->
+                usersList = snapshot.documents.map { doc -> 
+                    doc.id to (doc.data ?: emptyMap()) 
+                }
             }
         }
     }
@@ -539,10 +562,19 @@ fun PersonalScreen() {
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        if (usersList.isEmpty()) {
+        if (groupCode.isEmpty()) {
             item {
                 Text(
-                    "No hay personal registrado.", 
+                    "Ingresá un 'Código de Cuartel' en el menú para ver al personal.", 
+                    color = Color.Gray,
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodyLarge
+                )
+            }
+        } else if (usersList.isEmpty()) {
+            item {
+                Text(
+                    "No hay personal registrado en este cuartel.", 
                     color = Color.Gray,
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyLarge
@@ -634,31 +666,53 @@ fun HistoryScreen() {
     }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        db.collection("alertas")
-            .whereEqualTo("codigoCuartel", groupCode)
-            .orderBy("fecha", com.google.firebase.firestore.Query.Direction.DESCENDING) // Ordenar descendente
-            .limit(50)
-            .get()
-            .addOnSuccessListener { snapshot ->
-                alerts = snapshot.documents.map { doc ->
-                    Alerta(
-                        id = doc.id,
-                        titulo = doc.getString("titulo") ?: "Sin título",
-                        fecha = doc.getDate("fecha") ?: Date(),
-                        estado = doc.getString("estado") ?: ""
-                    )
+        if (groupCode.isNotEmpty()) {
+            db.collection("alertas")
+                .whereEqualTo("codigoCuartel", groupCode)
+                .orderBy("fecha", com.google.firebase.firestore.Query.Direction.DESCENDING) // Ordenar descendente
+                .limit(50)
+                .get()
+                .addOnSuccessListener { snapshot ->
+                    alerts = snapshot.documents.map { doc ->
+                        Alerta(
+                            id = doc.id,
+                            titulo = doc.getString("titulo") ?: "Sin título",
+                            fecha = doc.getDate("fecha") ?: Date(),
+                            estado = doc.getString("estado") ?: ""
+                        )
+                    }
                 }
-            }
+        }
     }
 
     androidx.compose.foundation.lazy.LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
         contentPadding = PaddingValues(vertical = 24.dp)
     ) {
-        items(alerts.size) { index ->
-            val alerta = alerts[index]
-            HistoryItem(alerta)
-            Spacer(modifier = Modifier.height(24.dp))
+        if (groupCode.isEmpty()) {
+            item {
+                Text(
+                    "Ingresá un 'Código de Cuartel' en el menú para ver el historial.",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        } else if (alerts.isEmpty()) {
+            item {
+                Text(
+                    "No hay historial de alertas.",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(16.dp)
+                )
+            }
+        } else {
+            items(alerts.size) { index ->
+                val alerta = alerts[index]
+                HistoryItem(alerta)
+                Spacer(modifier = Modifier.height(24.dp))
+            }
         }
     }
 }
@@ -698,7 +752,7 @@ fun HistoryItem(alerta: Alerta) {
         if (disponibles.isNotEmpty()) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    androidx.compose.material.icons.Icons.Filled.ArrowBack, // Placeholder icon check
+                    androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, // Placeholder icon check
                     contentDescription = null,
                     tint = Color(0xFF4CAF50),
                     modifier = Modifier.size(16.dp)
@@ -758,8 +812,22 @@ fun SoundScreen() {
         val packageName = context.packageName
 
         // 1. SONIDOS PERSONALIZADOS
-        val sirenaBomberosUri = Uri.parse("android.resource://$packageName/${R.raw.sirena_bomberos}")
-        sounds.add("Sirena Bomberos" to sirenaBomberosUri)
+        val sirena1Uri = Uri.parse("android.resource://$packageName/${R.raw.sirena_bomberos}")
+        sounds.add("Sirena Bomberos 1" to sirena1Uri)
+        val sirena2Uri = Uri.parse("android.resource://$packageName/${R.raw.alerta_fuego}")
+        sounds.add("Sirena Bomberos 2" to sirena2Uri)
+        val sirena3Uri = Uri.parse("android.resource://$packageName/${R.raw.sirena_2}")
+        sounds.add("Sirena Bomberos 3" to sirena3Uri)
+        val graveUri = Uri.parse("android.resource://$packageName/${R.raw.grave}")
+        sounds.add("Grave" to graveUri)
+        val peligroUri = Uri.parse("android.resource://$packageName/${R.raw.peligro}")
+        sounds.add("Peligro" to peligroUri)
+        val policiaUri = Uri.parse("android.resource://$packageName/${R.raw.policia}")
+        sounds.add("Policia" to policiaUri)
+        val sirena3BUri = Uri.parse("android.resource://$packageName/${R.raw.sirena_3}")
+        sounds.add("Otra Sirena" to sirena3BUri)
+
+
 
         // 2. SONIDOS DEL SISTEMA
         sounds.add("Notificación Estándar" to RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
@@ -939,37 +1007,33 @@ fun WeatherWidget() {
     
     val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
 
-    val requestPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions: Map<String, Boolean> ->
-        if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || 
-            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
-            // Permission granted, get location
-            getLocationAndFetchWeather(context, fusedLocationClient) { data ->
-                weather = data
-            }
-        } else {
-            locationError = "Ubicación requerida para clima"
-        }
+    var hasPermission by remember { 
+        mutableStateOf(
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        )
     }
 
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-         if (ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(
-                context,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissionLauncher.launch(arrayOf(
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.ACCESS_COARSE_LOCATION
-            ))
-        } else {
-             getLocationAndFetchWeather(context, fusedLocationClient) { data ->
-                weather = data
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                hasPermission = ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                                ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
             }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    androidx.compose.runtime.LaunchedEffect(hasPermission) {
+        if (hasPermission) {
+            getLocationAndFetchWeather(context, fusedLocationClient) { data ->
+                weather = data
+                locationError = null
+            }
+        } else {
+            locationError = "Esperando permiso de ubicación..."
         }
     }
 
@@ -1074,7 +1138,8 @@ data class Alerta(
     val id: String,
     val titulo: String,
     val fecha: Date,
-    val estado: String
+    val estado: String,
+    val ubicacion: String = ""
 )
 
 @Composable
@@ -1084,6 +1149,7 @@ fun HomeScreen() {
     
     // Minimalist state
     var tituloAlerta by remember { mutableStateOf("") }
+    var ubicacionAlerta by remember { mutableStateOf("") }
     
     // Info Board State
     var infoContent by remember { mutableStateOf("Cargando novedades...") }
@@ -1227,6 +1293,14 @@ fun HomeScreen() {
             onValueChange = { tituloAlerta = it },
             label = "TÍTULO DE ALERTA (OPCIONAL)"
         )
+        
+        Spacer(modifier = Modifier.height(16.dp))
+        
+        LocationTextField(
+            value = ubicacionAlerta,
+            onValueChange = { ubicacionAlerta = it },
+            label = "UBICACIÓN (OPCIONAL O GPS)"
+        )
 
         Spacer(modifier = Modifier.height(32.dp))
 
@@ -1235,6 +1309,12 @@ fun HomeScreen() {
             onClick = {
                 val db = FirebaseFirestore.getInstance()
                 val user = FirebaseAuth.getInstance().currentUser
+                val groupCode = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("group_code", "") ?: ""
+                
+                if (groupCode.isEmpty()) {
+                    Toast.makeText(context, "Configurá un Código de Cuartel primero", Toast.LENGTH_SHORT).show()
+                    return@Button
+                }
 
                 val alerta = hashMapOf(
                     "fecha" to Date(),
@@ -1243,6 +1323,7 @@ fun HomeScreen() {
                     "estado" to "ACTIVA",
                     "estado" to "ACTIVA",
                     "titulo" to tituloAlerta.ifEmpty { "ALERTA DE INCENDIO" },
+                    "ubicacion" to ubicacionAlerta,
                     "codigoCuartel" to (context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("group_code", "") ?: "")
                 )
 
@@ -1251,6 +1332,7 @@ fun HomeScreen() {
                     .addOnSuccessListener {
                         Toast.makeText(context, "ALERTA ENVIADA", Toast.LENGTH_SHORT).show()
                         tituloAlerta = "" // Clear input
+                        ubicacionAlerta = ""
                     }
                     .addOnFailureListener {
                         Toast.makeText(context, "Error al enviar", Toast.LENGTH_SHORT).show()
@@ -1311,6 +1393,11 @@ fun AlertsList(
         context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE).getString("group_code", "") ?: "" 
     }
 
+    if (groupCode.isEmpty()) {
+        Text("Ingresá tu 'Código de Cuartel' desde el menú para enviar o recibir alertas en tu grupo.", color = Color.Gray, modifier = Modifier.padding(vertical = 16.dp))
+        return
+    }
+
     androidx.compose.runtime.DisposableEffect(Unit) {
         val listener = db.collection("alertas")
             .whereEqualTo("estado", "ACTIVA")
@@ -1325,7 +1412,8 @@ fun AlertsList(
                             id = doc.id,
                             titulo = doc.getString("titulo") ?: "Sin título",
                             fecha = doc.getDate("fecha") ?: Date(),
-                            estado = doc.getString("estado") ?: ""
+                            estado = doc.getString("estado") ?: "",
+                            ubicacion = doc.getString("ubicacion") ?: ""
                         )
                     }
                 }
@@ -1398,9 +1486,11 @@ fun AlertsList(
                                    fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                                    letterSpacing = 1.sp
                                )
+                               val sdf = remember { java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()) }
+                               val fechaFormateada = remember(alerta.fecha) { sdf.format(alerta.fecha) }
                                Text(
-                                    text = if (isExpired) "Expirada • Hace ${((Date().time - alerta.fecha.time) / 1000 / 60)} min" 
-                                    else "Hace ${((Date().time - alerta.fecha.time) / 1000 / 60)} min",
+                                    text = if (isExpired) "Expirada • $fechaFormateada" 
+                                    else "Lanzada: $fechaFormateada",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color.Gray
                                )
@@ -1408,6 +1498,42 @@ fun AlertsList(
                         }
 
                         Spacer(modifier = Modifier.height(20.dp))
+                        
+                        // Location Button
+                        if (alerta.ubicacion.isNotEmpty()) {
+                            Button(
+                                onClick = {
+                                    val uri = android.net.Uri.parse("geo:0,0?q=${android.net.Uri.encode(alerta.ubicacion)}")
+                                    val intent = Intent(Intent.ACTION_VIEW, uri)
+                                    intent.setPackage("com.google.android.apps.maps")
+                                    if (intent.resolveActivity(context.packageManager) != null) {
+                                        context.startActivity(intent)
+                                    } else {
+                                        val webIntent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://www.google.com/maps/search/?api=1&query=${android.net.Uri.encode(alerta.ubicacion)}"))
+                                        context.startActivity(webIntent)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF1E88E5), // Blue
+                                    contentColor = Color.White
+                                ),
+                                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                                modifier = Modifier.fillMaxWidth().height(40.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        androidx.compose.material.icons.Icons.Filled.LocationOn,
+                                        contentDescription = "Abrir en Maps",
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    val isCoord = alerta.ubicacion.matches(Regex("^-?\\d+(\\.\\d+)?\\s*,\\s*-?\\d+(\\.\\d+)?$"))
+                                    val mapText = if (isCoord) "UBICACIÓN FIJADA" else "IR A MAPAS: ${alerta.ubicacion.uppercase()}"
+                                    Text(mapText, style = MaterialTheme.typography.labelSmall, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                        }
                         
                         // Status Bar
                         if (disponibles.isNotEmpty()) {
@@ -1545,6 +1671,192 @@ fun MinimalTextField(
                 .padding(vertical = 8.dp)
         )
         HorizontalDivider(color = Color.DarkGray)
+    }
+}
+
+@Composable
+fun LocationTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String
+) {
+    val context = LocalContext.current
+    val fusedLocationClient = remember { LocationServices.getFusedLocationProviderClient(context) }
+    var locationError by remember { mutableStateOf<String?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+    var showMapDialog by remember { mutableStateOf(false) }
+
+    val requestPermissionLauncher = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions: Map<String, Boolean> ->
+        if (permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true || 
+            permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
+            
+            try {
+                if (androidx.core.app.ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                        if (location != null) {
+                            onValueChange("${location.latitude}, ${location.longitude}")
+                        } else {
+                            locationError = "No se pudo obtener la ubicación"
+                        }
+                        isLoading = false
+                    }
+                }
+            } catch(e: Exception) { isLoading = false }
+        } else {
+            isLoading = false
+            locationError = "Permiso denegado"
+        }
+    }
+
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Gray,
+            letterSpacing = 1.sp
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            androidx.compose.foundation.text.BasicTextField(
+                value = value,
+                onValueChange = onValueChange,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = Color.White),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.White),
+                modifier = Modifier.weight(1f)
+            )
+            
+            Spacer(modifier = Modifier.width(8.dp))
+            
+            IconButton(
+                onClick = { showMapDialog = true },
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    androidx.compose.material.icons.Icons.Filled.LocationOn, 
+                    contentDescription = "Elegir en el Mapa",
+                    tint = Color(0xFF4CAF50) // Verde
+                )
+            }
+            
+            Spacer(modifier = Modifier.width(16.dp))
+            
+            IconButton(
+                onClick = {
+                    isLoading = true
+                    if (androidx.core.app.ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        requestPermissionLauncher.launch(arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        ))
+                    } else {
+                        try {
+                            fusedLocationClient.lastLocation.addOnSuccessListener { location ->
+                                if (location != null) {
+                                    onValueChange("${location.latitude}, ${location.longitude}")
+                                } else {
+                                    locationError = "Enciende el GPS y probá de nuevo"
+                                }
+                                isLoading = false
+                            }.addOnFailureListener {
+                                locationError = "Error al obtener GPS"
+                                isLoading = false
+                            }
+                        } catch(e: Exception) { 
+                            isLoading = false 
+                        }
+                    }
+                },
+                modifier = Modifier.size(24.dp)
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(color = Color(0xFF1E88E5), strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                } else {
+                    Icon(
+                        androidx.compose.material.icons.Icons.Filled.LocationOn, 
+                        contentDescription = "Usar mi ubicación actual",
+                        tint = Color(0xFF1E88E5)
+                    )
+                }
+            }
+        }
+        HorizontalDivider(color = Color.DarkGray)
+        if (locationError != null) {
+            Text(locationError!!, color = Color.Red, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
+            androidx.compose.runtime.LaunchedEffect(locationError) {
+                kotlinx.coroutines.delay(3000)
+                locationError = null
+            }
+        }
+    }
+
+    if (showMapDialog) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showMapDialog = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().background(Color(0xFF222222)).padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = { showMapDialog = false }) {
+                            Icon(androidx.compose.material.icons.Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Volver", tint = Color.White)
+                        }
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("Mové el mapa al lugar", color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    }
+                    
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                        var mapView by remember { mutableStateOf<org.osmdroid.views.MapView?>(null) }
+                        
+                        androidx.compose.ui.viewinterop.AndroidView(
+                            factory = { ctx ->
+                                org.osmdroid.views.MapView(ctx).apply {
+                                    setTileSource(org.osmdroid.tileprovider.tilesource.TileSourceFactory.MAPNIK)
+                                    setMultiTouchControls(true)
+                                    controller.setZoom(16.0)
+                                    
+                                    val geoPoint = try {
+                                        val parts = value.split(",")
+                                        if (parts.size >= 2) org.osmdroid.util.GeoPoint(parts[0].trim().toDouble(), parts[1].trim().toDouble()) else org.osmdroid.util.GeoPoint(-34.6037, -58.3816)
+                                    } catch(e: Exception) { org.osmdroid.util.GeoPoint(-34.6037, -58.3816) }
+                                    
+                                    controller.setCenter(geoPoint)
+                                    mapView = this
+                                }
+                            },
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        
+                        Icon(
+                            androidx.compose.material.icons.Icons.Filled.LocationOn,
+                            contentDescription = "Pin de ubicación",
+                            tint = Color.Red,
+                            modifier = Modifier.align(Alignment.Center).size(48.dp).offset(y = (-24).dp)
+                        )
+                        
+                        Button(
+                            onClick = {
+                                mapView?.let { map ->
+                                    val center = map.mapCenter
+                                    onValueChange("${center.latitude}, ${center.longitude}")
+                                }
+                                showMapDialog = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp).fillMaxWidth().height(56.dp)
+                        ) {
+                            Text("SELECCIONAR ESTA UBICACIÓN", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
