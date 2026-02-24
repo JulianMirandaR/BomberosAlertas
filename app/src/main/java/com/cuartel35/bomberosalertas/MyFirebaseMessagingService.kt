@@ -22,10 +22,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             ?: message.data["body"]
             ?: "Nueva alerta recibida"
 
-        showNotification(title, body)
+        val alertaId = message.data["alertaId"]
+
+        showNotification(title, body, alertaId)
     }
 
-    private fun showNotification(title: String, body: String) {
+    private fun showNotification(title: String, body: String, alertaId: String?) {
         val prefs = getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
         val channelId = prefs.getString("channel_id", "alertas_channel") ?: "alertas_channel"
         val soundUriString = prefs.getString("alert_sound_uri", null)
@@ -55,18 +57,49 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
+        val notificationId = System.currentTimeMillis().toInt()
+
         val notificationBuilder = NotificationCompat.Builder(this, channelId)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
             .setContentText(body)
             .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setColor(android.graphics.Color.RED)
+            .setLights(android.graphics.Color.RED, 500, 500)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+
+        if (alertaId != null) {
+            val intentDisponible = android.content.Intent(this, AlertResponseReceiver::class.java).apply {
+                putExtra("alerta_id", alertaId)
+                putExtra("estado", "DISPONIBLE")
+                putExtra("notification_id", notificationId)
+            }
+            val flag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            } else {
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val pendingIntentDisponible = android.app.PendingIntent.getBroadcast(this, 0, intentDisponible, flag)
+
+            val intentNoDisponible = android.content.Intent(this, AlertResponseReceiver::class.java).apply {
+                putExtra("alerta_id", alertaId)
+                putExtra("estado", "NO DISPONIBLE")
+                putExtra("notification_id", notificationId)
+            }
+            val pendingIntentNoDisponible = android.app.PendingIntent.getBroadcast(this, 1, intentNoDisponible, flag)
+
+            notificationBuilder.addAction(0, "✅ DISPONIBLE", pendingIntentDisponible)
+            notificationBuilder.addAction(0, "❌ NO DISPONIBLE", pendingIntentNoDisponible)
+        }
 
         if (soundUri != null) {
             notificationBuilder.setSound(soundUri)
+            notificationBuilder.setDefaults(NotificationCompat.DEFAULT_VIBRATE)
         }
 
-        manager.notify(System.currentTimeMillis().toInt(), notificationBuilder.build())
+        manager.notify(notificationId, notificationBuilder.build())
     }
 
     override fun onNewToken(token: String) {

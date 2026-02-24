@@ -51,7 +51,8 @@ exports.enviarAlertaFCM = onDocumentCreated(
         },
         data: {
           title: titulo,
-          body: "Se activó una nueva alerta. Verificá la app."
+          body: "Se activó una nueva alerta. Verificá la app.",
+          alertaId: event.params.alertaId
         },
         tokens
       };
